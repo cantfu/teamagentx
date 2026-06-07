@@ -1738,6 +1738,10 @@
       "gaming": "打游戏🎮",
       "sleeping": "睡觉💤"
     },
+    "call": {
+      "calling": "呼叫 @{{name}}",
+      "received": "收到"
+    },
     "encourage": {
       "default": "加油！💪",
       "options": [
@@ -1783,7 +1787,7 @@
       "enterTipSend": "发送消息"
     },
     "agentsCount": "{{count}} 位助手",
-    "bossGreeting": "欢迎来到 TeamAgentX！",
+    "bossGreeting": "老板好！",
     "executionDetail": "执行详情",
     "returnToChat": "返回群聊",
     "socketDisconnected": "Socket 未连接，助手状态可能不是最新的"

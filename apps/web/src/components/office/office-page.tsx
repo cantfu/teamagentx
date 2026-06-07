@@ -51,6 +51,70 @@ function mentionedAgentNames(content: string, agentNames: string[]): string[] {
   return found
 }
 
+// 远程呼叫表现持续时间（毫秒）：A @ B 时双方头顶气泡 + 连线特效的展示时长
+const CALL_DURATION_MS = 2500
+
+// 呼叫连线特效：在发起方 A 与被呼叫方 B 的工位头顶之间画一条线，并有一个沿线飞向 B 的光点。
+// 实时读取 agentPositionsRef（每帧由各 OfficeCharacter 写入），保证连线随人物贴合。
+function CallBeam({
+  fromId,
+  toId,
+  color,
+  agentPositionsRef,
+}: {
+  fromId: string
+  toId: string
+  color: string
+  agentPositionsRef: React.RefObject<Record<string, { x: number; z: number }>>
+}) {
+  const lineRef = useRef<THREE.Line>(null)
+  const dotRef = useRef<THREE.Mesh>(null)
+  const geomRef = useRef<THREE.BufferGeometry>(null)
+  const HEAD_Y = 1.9
+  // 预分配两个端点的位置缓冲
+  const positions = useMemo(() => new Float32Array(6), [])
+
+  useFrame(({ clock }) => {
+    const pos = agentPositionsRef.current
+    const a = pos?.[fromId]
+    const b = pos?.[toId]
+    if (!a || !b) return
+    // 更新连线两端点
+    positions[0] = a.x; positions[1] = HEAD_Y; positions[2] = a.z
+    positions[3] = b.x; positions[4] = HEAD_Y; positions[5] = b.z
+    const geom = geomRef.current
+    if (geom) {
+      const attr = geom.getAttribute('position') as THREE.BufferAttribute | undefined
+      if (attr) {
+        attr.set(positions)
+        attr.needsUpdate = true
+      }
+    }
+    // 光点沿 A→B 往返飞行
+    const dot = dotRef.current
+    if (dot) {
+      const tt = (Math.sin(clock.elapsedTime * 4) + 1) / 2 // 0..1
+      dot.position.set(a.x + (b.x - a.x) * tt, HEAD_Y, a.z + (b.z - a.z) * tt)
+    }
+  })
+
+  return (
+    <group>
+      {/* @ts-expect-error three line 元素 */}
+      <line ref={lineRef}>
+        <bufferGeometry ref={geomRef}>
+          <bufferAttribute attach="attributes-position" args={[positions, 3]} />
+        </bufferGeometry>
+        <lineBasicMaterial color={color} transparent opacity={0.55} />
+      </line>
+      <mesh ref={dotRef}>
+        <sphereGeometry args={[0.09, 12, 12]} />
+        <meshBasicMaterial color={color} />
+      </mesh>
+    </group>
+  )
+}
+
 // 老板人物组件（可控制移动）
 function BossCharacter({
   walkGrid,
@@ -650,10 +714,12 @@ export function OfficePage() {
   stationsRef.current = stations
   // 助手实时位置（由各 OfficeCharacter 每帧写入），供相机跟随移动中的助手
   const agentPositionsRef = useRef<Record<string, { x: number; z: number }>>({})
-  // 助手串门：A @ 了 B 时，A 立刻走到 B 当前位置旁边交谈；B 原地不动，交谈结束后再回工位执行任务
-  // visitorId -> { A 的站位 pos / 朝向 rot；被访者 id targetId }（被访者交谈期间由 freezeInPlace 钉在当前位置）
-  const [visits, setVisits] = useState<Record<string, { pos: [number, number, number]; rot: number; targetId: string }>>({})
-  const visitTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+  // 远程呼叫：A @ 了 B 时，A 在自己工位发起呼叫，A、B 都不离开工位（不走路、不钉位）。
+  // 仅做表现：A 头顶弹「呼叫 @B」气泡，B 头顶弹「收到」气泡，并在两人工位间画一条呼叫连线特效。
+  // 由于双方都不离开工位，B 的工作动画继续由 status 驱动，不存在「走回工位途中任务已完成」的时序错位。
+  // callerId -> { targetId }
+  const [calls, setCalls] = useState<Record<string, { targetId: string }>>({})
+  const callTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   // 使用完整障碍物构建（包含动态家具）
   const obstacles = useMemo(
     () => buildFullObstacles(agents.map(a => ({ cx: a.deskFurniture[0], cz: a.deskFurniture[2] })), furniture),
@@ -738,7 +804,8 @@ export function OfficePage() {
     }
   }, [chatRoomId, isConnected, joinChatRoom, leaveChatRoom, onAgentStatus, requestAgentStatus, setAgentStatuses])
 
-  // 监听消息：某助手 @ 了房间内另一个助手时，A 立刻去找 B（B 当前位置不动），交谈几秒后 A 回工位、B 再去工位执行任务
+  // 监听消息：某助手 @ 了房间内另一个助手时，A 在自己工位远程呼叫 B（双方都不离开工位），
+  // 仅做短暂的气泡 + 连线表现；B 的任务执行动画继续由 status 驱动，无走路/回工位的时序错位。
   useEffect(() => {
     const off = onMessage((msg) => {
       if (msg.chatRoomId !== chatRoomId) return
@@ -747,42 +814,24 @@ export function OfficePage() {
       const mentioned = mentionedAgentNames(msg.content || '', agents.map((a) => a.name))
       const target = agents.find((a) => a.id !== fromId && mentioned.includes(a.name))
       if (!target) return
-      // B 当前位置（实时位置优先，回退到工位站位 / 工位坐标）；A 去找 B，B 原地不动
-      const bStation = stationsRef.current[target.id]
-      const bpos = agentPositionsRef.current[target.id]
-        ?? (bStation ? { x: bStation.pos[0], z: bStation.pos[2] } : { x: target.deskFurniture[0], z: target.deskFurniture[2] })
-      // A 站到 B 旁边：朝 A 当前所在方向偏移，避免穿过 B
-      const apos = agentPositionsRef.current[fromId]
-      let dirX = apos ? apos.x - bpos.x : 1
-      let dirZ = apos ? apos.z - bpos.z : 0
-      const len = Math.hypot(dirX, dirZ) || 1
-      dirX /= len
-      dirZ /= len
-      const gap = 1.2
-      const spotX = bpos.x + dirX * gap
-      const spotZ = bpos.z + dirZ * gap
-      const rot = Math.atan2(bpos.x - spotX, bpos.z - spotZ) // A 面向 B
-      setVisits((prev) => ({
-        ...prev,
-        [fromId]: { pos: [spotX, 0, spotZ], rot, targetId: target.id },
-      }))
-      // 交谈结束：A 回工位，B 解除钉住后自行回工位执行任务
-      clearTimeout(visitTimersRef.current[fromId])
-      visitTimersRef.current[fromId] = setTimeout(() => {
-        setVisits((prev) => {
+      setCalls((prev) => ({ ...prev, [fromId]: { targetId: target.id } }))
+      // 呼叫表现持续时间到点后清除（远程喊无需走路时间，ping 一下即可）
+      clearTimeout(callTimersRef.current[fromId])
+      callTimersRef.current[fromId] = setTimeout(() => {
+        setCalls((prev) => {
           const next = { ...prev }
           delete next[fromId]
           return next
         })
-        delete visitTimersRef.current[fromId]
-      }, 5000)
+        delete callTimersRef.current[fromId]
+      }, CALL_DURATION_MS)
     })
     return off
   }, [onMessage, chatRoomId, agents])
 
-  // 卸载时清理串门定时器
+  // 卸载时清理呼叫定时器
   useEffect(() => () => {
-    for (const t of Object.values(visitTimersRef.current)) clearTimeout(t)
+    for (const t of Object.values(callTimersRef.current)) clearTimeout(t)
   }, [])
 
   // 老板位置 ref，用于助手检测距离打招呼（初始在老板椅后面，避开障碍物）
@@ -1378,27 +1427,21 @@ export function OfficePage() {
         {agents.map((agent) => {
           const baseAnim = states[agent.id]
           const station = stations[agent.id]
-          // 串门中：A 走到 B 旁边交谈；B 转头面向来访者一起交谈
-          const visit = visits[agent.id] // 本助手是来访者
-          const incoming = Object.values(visits).find((v) => v.targetId === agent.id) // 本助手被串门
-          let charPos = station.pos
-          let charRot = station.rot
-          let anim = baseAnim
+          // 远程呼叫：A、B 都留在工位（位置/朝向/动画均不改），只叠加头顶气泡。
+          const calling = calls[agent.id] // 本助手正在呼叫别人（A）
+          const beingCalled = Object.values(calls).some((c) => c.targetId === agent.id) // 本助手被呼叫（B）
+          const charPos = station.pos
+          const charRot = station.rot
+          const anim = baseAnim
           let bubbleOverride: string | undefined
-          // 被串门时原地钉住、转头看向来访者；交谈结束后再回工位执行任务
-          let freezeInPlace = false
-          let lookAt: [number, number, number] | undefined
-          if (visit) {
-            charPos = visit.pos
-            charRot = visit.rot
-            anim = 'talking'
-            bubbleOverride = '交谈中…'
-          } else if (incoming) {
-            // 被串门：留在当前位置不动（不寻路、不回工位），转向来访者一起交谈
-            freezeInPlace = true
-            lookAt = incoming.pos
-            anim = 'talking'
-            bubbleOverride = '交谈中…'
+          // 远程喊模式下不再钉位、不再转头看向来访者（保留变量以兼容 OfficeCharacter 既有 props）
+          const freezeInPlace = false
+          const lookAt: [number, number, number] | undefined = undefined
+          if (calling) {
+            const targetName = agents.find((a) => a.id === calling.targetId)?.name ?? ''
+            bubbleOverride = t('office.call.calling', { name: targetName })
+          } else if (beingCalled) {
+            bubbleOverride = t('office.call.received')
           }
           return (
             <group key={agent.id}>
@@ -1450,6 +1493,17 @@ export function OfficePage() {
             </group>
           )
         })}
+
+        {/* 远程呼叫连线特效：A → B 头顶之间的飞行光点连线 */}
+        {Object.entries(calls).map(([fromId, { targetId }]) => (
+          <CallBeam
+            key={`call-${fromId}-${targetId}`}
+            fromId={fromId}
+            toId={targetId}
+            color={agents.find((a) => a.id === fromId)?.color ?? '#5b9bd5'}
+            agentPositionsRef={agentPositionsRef}
+          />
+        ))}
 
         {/* 老板 */}
         <BossCharacter

@@ -1738,6 +1738,10 @@
       "gaming": "Gaming🎮",
       "sleeping": "Sleeping💤"
     },
+    "call": {
+      "calling": "Calling @{{name}}",
+      "received": "Got it"
+    },
     "encourage": {
       "default": "Go! 💪",
       "options": [
@@ -1783,7 +1787,7 @@
       "enterTipSend": "send message"
     },
     "agentsCount": "{{count}} Agents",
-    "bossGreeting": "Welcome to TeamAgentX!",
+    "bossGreeting": "Hi, boss!",
     "executionDetail": "Execution Details",
     "returnToChat": "Back to Chat",
     "socketDisconnected": "Socket disconnected, agent status may not be up-to-date"
