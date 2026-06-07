@@ -17,8 +17,8 @@ const HIDDEN_COLUMNS_KEY = 'taskboard-hidden-columns'
 interface TaskBoardPanelProps {
   chatRoom: ChatRoom
   onViewStream?: (messageId: string, agentId: string, agentName: string) => void
-  onViewExecutionRecord?: (executionRecordId: string, agentId: string) => void
-  onViewTaskQueue?: (agentId: string) => void
+  onViewExecutionRecord?: (executionRecordId: string, agentId: string, messageId?: string | null) => void
+  onViewTaskQueue?: (agentId: string, messageId?: string | null) => void
 }
 
 interface BoardColumnConfig {
@@ -479,8 +479,8 @@ function TaskBoardColumn({
   tasks: ChatTaskBoardItem[]
   agentMap: Map<string, NonNullable<ChatRoom['chatRoomAgents'][number]['agent']>>
   onViewStream?: (messageId: string, agentId: string, agentName: string) => void
-  onViewExecutionRecord?: (executionRecordId: string, agentId: string) => void
-  onViewTaskQueue?: (agentId: string) => void
+  onViewExecutionRecord?: (executionRecordId: string, agentId: string, messageId?: string | null) => void
+  onViewTaskQueue?: (agentId: string, messageId?: string | null) => void
   t: (key: string) => string
   i18n: { language: string }
 }) {
@@ -534,8 +534,8 @@ function TaskBoardCard({
   task: ChatTaskBoardItem
   agent?: NonNullable<ChatRoom['chatRoomAgents'][number]['agent']>
   onViewStream?: (messageId: string, agentId: string, agentName: string) => void
-  onViewExecutionRecord?: (executionRecordId: string, agentId: string) => void
-  onViewTaskQueue?: (agentId: string) => void
+  onViewExecutionRecord?: (executionRecordId: string, agentId: string, messageId?: string | null) => void
+  onViewTaskQueue?: (agentId: string, messageId?: string | null) => void
   t: (key: string, args?: any) => string
   i18n: { language: string }
 }) {
@@ -552,12 +552,12 @@ function TaskBoardCard({
     }
 
     if (canViewRecord && task.executionRecordId) {
-      onViewExecutionRecord(task.executionRecordId, task.agentId)
+      onViewExecutionRecord(task.executionRecordId, task.agentId, task.messageId)
       return
     }
 
     if (canViewQueue) {
-      onViewTaskQueue(task.agentId)
+      onViewTaskQueue(task.agentId, task.messageId)
     }
   }
 

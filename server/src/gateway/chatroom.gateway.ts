@@ -1402,12 +1402,17 @@ export async function chatRoomGateway(app: FastifyInstance) {
         createdAt: task.createdAt.toISOString(),
       }));
 
+      // 每条执行记录在群聊中产生的首条消息，用于「详情」定位
+      const firstMessageIdByRecord = await executionRecordService.getFirstOutputMessageIds(
+        completedRecords.map(record => record.id)
+      );
+
       const completed = completedRecords.map(record => ({
         id: record.id,
         kind: 'execution',
         agentId: record.agentId,
         agentName: record.agentName,
-        messageId: null,
+        messageId: firstMessageIdByRecord[record.id] ?? null,
         messageContent: record.triggerMessage,
         status: record.status,
         createdAt: record.createdAt,

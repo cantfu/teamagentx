@@ -3,7 +3,7 @@ import { AgentContextInfo, ChatRoom, debugApi, ExecutionRecord, Message } from '
 import { AgentAvatarImage } from '@/lib/agent-avatars'
 import { cn } from '@/lib/utils'
 import { isSystemAssistantDetailBlocked } from '@/lib/system-agents'
-import type { SidePanelMode } from '@/stores/chat-store'
+import { useChatStore, type SidePanelMode } from '@/stores/chat-store'
 import type { AgentStatus, StreamEvent } from '@/stores/socket-store'
 import { Bot, ClipboardList, Clock, Info, List, Loader2, MessageSquareMore, Settings, Users } from 'lucide-react'
 import { useEffect, useRef } from 'react'
@@ -98,6 +98,8 @@ export function ChatSidePanel({
   const { t } = useTranslation()
   // 记录面板来源，用于返回上一级
   const previousModeRef = useRef<SidePanelMode | null>(null)
+  // 任务看板点详情时，定位主聊天区到对应消息
+  const setScrollToMessageId = useChatStore((s) => s.setScrollToMessageId)
 
   // 当从任务看板或助手列表进入子面板时，记录来源
   useEffect(() => {
@@ -286,9 +288,11 @@ export function ChatSidePanel({
   const handleViewStreamFromTaskQueue = (messageId: string, agentId: string, agentName: string) => {
     setStreamingViewAgent({ messageId, agentId, name: agentName })
     setSidePanelMode('stream')
+    // 执行中任务：定位到触发消息
+    if (messageId) setScrollToMessageId(messageId)
   }
 
-  const handleViewExecutionRecordFromTaskBoard = async (executionRecordId: string, agentId: string) => {
+  const handleViewExecutionRecordFromTaskBoard = async (executionRecordId: string, agentId: string, messageId?: string | null) => {
     const response = await debugApi.getExecutionRecords(chatRoom.id, agentId, 100)
     const record = response.data?.find((item) => item.id === executionRecordId)
 
@@ -300,9 +304,12 @@ export function ChatSidePanel({
     previousModeRef.current = 'task-board'
     setSelectedRecord(record)
     setSidePanelMode('execution-detail')
+
+    // 已完成/失败任务：定位到该执行记录产生的首条消息
+    if (messageId) setScrollToMessageId(messageId)
   }
 
-  const handleViewTaskQueueFromTaskBoard = (agentId: string) => {
+  const handleViewTaskQueueFromTaskBoard = (agentId: string, messageId?: string | null) => {
     const roomAgent = chatRoom.chatRoomAgents?.find(
       (item) => item.agentId === agentId || item.agent?.id === agentId
     )
@@ -325,6 +332,8 @@ export function ChatSidePanel({
       injectGroupHistory: roomAgent.injectGroupHistory,
     })
     setSidePanelMode('task-queue')
+    // 待执行/可恢复任务：定位到触发消息
+    if (messageId) setScrollToMessageId(messageId)
   }
 
   // 根据当前面板层级决定关闭行为

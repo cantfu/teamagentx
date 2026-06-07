@@ -310,6 +310,29 @@ class ExecutionRecordService {
     return record ? parseRecord(record) : null;
   }
 
+  /**
+   * 批量获取每条执行记录产生的首条消息 ID（按消息时间排序）。
+   * 用于任务看板「详情」定位到该执行记录在群聊中的回复消息。
+   */
+  async getFirstOutputMessageIds(recordIds: string[]): Promise<Record<string, string>> {
+    if (recordIds.length === 0) return {};
+
+    const messages = await prisma.message.findMany({
+      where: { executionRecordId: { in: recordIds } },
+      orderBy: { time: 'asc' },
+      select: { id: true, executionRecordId: true },
+    });
+
+    const map: Record<string, string> = {};
+    for (const message of messages) {
+      const recordId = message.executionRecordId;
+      if (recordId && !(recordId in map)) {
+        map[recordId] = message.id;
+      }
+    }
+    return map;
+  }
+
   async deleteByChatRoomId(chatRoomId: string): Promise<{ count: number }> {
     return prisma.executionRecord.deleteMany({
       where: { chatRoomId },
